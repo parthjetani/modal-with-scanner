@@ -111,7 +111,8 @@
             startScanner();
         });
 
-        $('#barcodeModal').on('hide.bs.modal', function () {
+        $('#barcodeModal').on('hide.bs.modal', function (e) {
+            e.preventDefault();
             Quagga.stop();
         });
 
@@ -154,6 +155,7 @@
 
             Quagga.onDetected(function (result) {
                 const barcode = result.codeResult.code;
+                apiScanner(barcode);
                 document.getElementById("result").textContent = "Barcode found: " + barcode;
                 Quagga.stop();
             });
@@ -164,6 +166,7 @@
                         document.getElementById("result").textContent ="Scanning...";
                     } else if (result.codeResult) {
                         document.getElementById("result").textContent = "Barcode found: " + result.codeResult.code;
+                        apiScanner(result.codeResult.code);
                         Quagga.stop();
                     } else {
                         document.getElementById("result").textContent ="Image quality too low, please move closer.";
@@ -172,6 +175,12 @@
                     document.getElementById("result").textContent ="Please show the valid barcode...";
                 }
             });
+        }
+
+        function apiScanner(barcode) {
+            $('#barcodeModal').modal('hide');
+            document.getElementsByClassName("barcode")[0].innerText = barcode;
+            $('#addItemModal').modal('show');
         }
     </script>
 </body>
