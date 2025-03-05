@@ -3,17 +3,121 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Barcode Scanner</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Advanced Barcode Scanner</title>
+    <script src="https://docs.opencv.org/4.5.1/opencv.js"></script>
+    <script src="https://unpkg.com/quagga"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        #scanner {
+            width: 100%;
+            max-width: 640px;
+            margin: 20px auto;
+        }
+        #barcode-result {
+            font-size: 20px;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Web Barcode Scanner</h1>
-        <div class="video-container">
-            <video id="video" autoplay playsinline></video>
-        </div>
-        <div id="result">Scanned Barcode: <span id="barcodeResult">None</span></div>
-    </div>
-    <script src="script.js"></script>
+    <h1>Advanced Barcode Scanner</h1>
+    <div id="scanner"></div>
+    <p>Detected Barcode: <span id="barcode-result">None</span></p>
+    <script>
+        // Function to preprocess image using OpenCV.js
+        function preprocessImage(imageData) {
+            let src = cv.matFromImageData(imageData);
+            let dst = new cv.Mat();
+
+            // Convert to grayscale
+            cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
+            
+            // Apply Gaussian Blur to reduce noise
+            cv.GaussianBlur(dst, dst, new cv.Size(3, 3), 0);
+            
+            // Apply adaptive thresholding to enhance barcode
+            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+            
+            // Increase contrast for better detection
+            cv.equalizeHist(dst, dst);
+            
+            let processedImageData = new ImageData(new Uint8ClampedArray(dst.data), imageData.width, imageData.height);
+            src.delete();
+            dst.delete();
+            return processedImageData;
+        }
+
+        // Initialize QuaggaJS with enhanced accuracy and speed settings
+        function startScanner() {
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector("#scanner"),
+                    constraints: {
+                        width: 640,
+                        height: 480,
+                        facingMode: "environment"
+                    }
+                },
+                decoder: {
+                    readers: ["code_128_reader", "ean_reader", "ean_8_reader", "upc_reader"],
+                    multiple: false
+                },
+                locate: true,
+                numOfWorkers: navigator.hardwareConcurrency || 4,
+                locator: {
+                    halfSample: true,
+                    patchSize: "medium", // Adjusted for better detection
+                    debug: false
+                },
+                frequency: 10, // Increase scanning speed
+            }, function(err) {
+                if (err) {
+                    console.error(err);
+                    return;
+                }
+                Quagga.start();
+            });
+
+            let lastScannedCode = "";
+            let scanCooldown = 500; // Reduce cooldown for faster scanning
+
+            // Process detected barcode with additional checks
+            Quagga.onDetected(function(result) {
+                let currentCode = result.codeResult.code;
+                
+                if (currentCode !== lastScannedCode) {
+                    lastScannedCode = currentCode;
+                    console.log("Barcode detected: ", currentCode);
+                    document.getElementById("barcode-result").innerText = currentCode;
+                    
+                    // Restart scanning quickly for fast recognition
+                    setTimeout(() => { lastScannedCode = ""; }, scanCooldown);
+                }
+            });
+
+            // Improve detection in low light
+            Quagga.onProcessed(function(result) {
+                let drawingCtx = Quagga.canvas.ctx.overlay,
+                    drawingCanvas = Quagga.canvas.dom.overlay;
+                
+                if (result) {
+                    if (result.boxes) {
+                        drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                        result.boxes.forEach(box => {
+                            Quagga.ImageDebug.drawPath(box, {x: 0, y: 1}, drawingCtx, {color: "blue", lineWidth: 2});
+                        });
+                    }
+                }
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", startScanner);
+    </script>
 </body>
 </html>
