@@ -95,9 +95,10 @@
                     lastScannedCode = currentCode;
                     console.log("Barcode detected: ", currentCode);
                     document.getElementById("barcode-result").innerText = currentCode;
+                    Quagga.stop();
                     
                     // Restart scanning quickly for fast recognition
-                    setTimeout(() => { lastScannedCode = ""; }, scanCooldown);
+                    // setTimeout(() => { lastScannedCode = ""; }, scanCooldown);
                 }
             });
 
