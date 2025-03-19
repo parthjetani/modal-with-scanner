@@ -3,122 +3,262 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Barcode Scanner</title>
-    <script src="https://docs.opencv.org/4.5.1/opencv.js"></script>
-    <script src="https://unpkg.com/quagga"></script>
+    <title>UPC Scanner</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            text-align: center;
+            margin: 0;
+            padding: 0;
+            background: #f0f0f0;
         }
-        #scanner {
-            width: 100%;
+        .container {
             max-width: 640px;
             margin: 20px auto;
+            text-align: center;
+            padding: 20px;
         }
-        #barcode-result {
-            font-size: 20px;
-            font-weight: bold;
-            margin-top: 20px;
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .scanner-wrapper {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+        }
+        video {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.5);
+        }
+        .scan-area {
+            position: absolute;
+            top: 20%;
+            left: 20%;
+            width: 60%;
+            height: 60%;
+            border: 2px dashed #00ff00;
+            background: transparent;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+        #result {
+            margin: 20px 0;
+            padding: 15px;
+            font-size: 18px;
+            border-radius: 5px;
+            background: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .error { color: #d32f2f; }
+        .success { color: #388e3c; }
+        .scanning { color: #1976d2; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background: #1976d2;
+            color: white;
+            transition: background 0.3s;
+            display: none;
+        }
+        button.visible {
+            display: inline-block;
+        }
+        button:hover:not(:disabled) {
+            background: #1565c0;
         }
     </style>
 </head>
 <body>
-    <h1>Advanced Barcode Scanner</h1>
-    <div id="scanner"></div>
-    <p>Detected Barcode: <span id="barcode-result">None</span></p>
-    <script>
-        // Function to preprocess image using OpenCV.js
-        function preprocessImage(imageData) {
-            let src = cv.matFromImageData(imageData);
-            let dst = new cv.Mat();
+    <div class="container">
+        <h1>UPC Scanner</h1>
+        <div class="scanner-wrapper">
+            <video id="video" autoplay playsinline></video>
+            <div class="overlay">
+                <div class="scan-area"></div>
+            </div>
+        </div>
+        <div id="result">Loading scanner...</div>
+        <button id="stopButton">Stop Scanner</button>
+    </div>
 
-            // Convert to grayscale
-            cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
-            
-            // Apply Gaussian Blur to reduce noise
-            cv.GaussianBlur(dst, dst, new cv.Size(3, 3), 0);
-            
-            // Apply adaptive thresholding to enhance barcode
-            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
-            
-            // Increase contrast for better detection
-            cv.equalizeHist(dst, dst);
-            
-            let processedImageData = new ImageData(new Uint8ClampedArray(dst.data), imageData.width, imageData.height);
-            src.delete();
-            dst.delete();
-            return processedImageData;
+    <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const resultDiv = document.getElementById('result');
+        const stopButton = document.getElementById('stopButton');
+        let isScanning = false;
+        let lastDetectedCode = null;
+        let detectionCount = 0;
+        const DETECTION_THRESHOLD = 3;
+        const DEBOUNCE_TIME = 500;
+        let lastDetectionTime = 0;
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            handleError('Browser doesn\'t support camera access');
         }
 
-        // Initialize QuaggaJS with enhanced accuracy and speed settings
+        window.addEventListener('load', startScanner);
+        stopButton.addEventListener('click', stopScanner);
+
         function startScanner() {
-            Quagga.init({
-                inputStream: {
-                    name: "Live",
-                    type: "LiveStream",
-                    target: document.querySelector("#scanner"),
-                    constraints: {
-                        width: 640,
-                        height: 480,
-                        facingMode: "environment"
+            try {
+                lastDetectedCode = null;
+                detectionCount = 0;
+                lastDetectionTime = 0;
+
+                Quagga.init({
+                    inputStream: {
+                        name: "Live",
+                        type: "LiveStream",
+                        target: video,
+                        constraints: {
+                            facingMode: "environment",
+                            width: { ideal: 640 },
+                            height: { ideal: 480 }
+                        },
+                        area: { top: "20%", right: "20%", left: "20%", bottom: "20%" }
+                    },
+                    locator: {
+                        patchSize: "medium",
+                        halfSample: true
+                    },
+                    numOfWorkers: navigator.hardwareConcurrency || 4,
+                    decoder: {
+                        readers: ["upc_reader", "upc_e_reader", "ean_reader"],
+                        multiple: false
+                    },
+                    locate: true
+                }, function(err) {
+                    if (err) {
+                        handleError(getErrorMessage(err));
+                        return;
                     }
-                },
-                decoder: {
-                    readers: ["code_128_reader", "ean_reader", "ean_8_reader", "upc_reader"],
-                    multiple: false
-                },
-                locate: true,
-                numOfWorkers: navigator.hardwareConcurrency || 4,
-                locator: {
-                    halfSample: true,
-                    patchSize: "medium", // Adjusted for better detection
-                    debug: false
-                },
-                frequency: 10, // Increase scanning speed
-            }, function(err) {
-                if (err) {
-                    console.error(err);
+                    try {
+                        Quagga.start();
+                        isScanning = true;
+                        stopButton.classList.add('visible');
+                        resultDiv.textContent = 'Scanner started. Align barcode in green area.';
+                        resultDiv.className = 'scanning';
+                    } catch (startErr) {
+                        handleError('Failed to start scanner: ' + startErr.message);
+                    }
+                });
+
+                Quagga.onProcessed(handleProcessed);
+                Quagga.onDetected(handleDetection);
+
+            } catch (initErr) {
+                handleError('Initialization failed: ' + initErr.message);
+            }
+        }
+
+        function stopScanner() {
+            try {
+                if (isScanning) {
+                    Quagga.stop();
+                    isScanning = false;
+                    stopButton.classList.remove('visible');
+                    resultDiv.textContent = 'Scanner stopped';
+                    resultDiv.className = '';
+                    lastDetectedCode = null;
+                    detectionCount = 0;
+                }
+            } catch (stopErr) {
+                handleError('Error stopping scanner: ' + stopErr.message);
+            }
+        }
+
+        function handleProcessed(result) {
+            try {
+                if (!result && isScanning) {
+                    resultDiv.textContent = 'Scanning... Align barcode in green area';
+                    resultDiv.className = 'scanning';
+                }
+            } catch (processErr) {
+                handleError('Processing error: ' + processErr.message);
+            }
+        }
+
+        function handleDetection(data) {
+            try {
+                if (!data || !data.codeResult || !data.codeResult.code) {
                     return;
                 }
-                Quagga.start();
-            });
 
-            let lastScannedCode = "";
-            let scanCooldown = 500; // Reduce cooldown for faster scanning
+                const currentTime = Date.now();
+                const code = data.codeResult.code;
 
-            // Process detected barcode with additional checks
-            Quagga.onDetected(function(result) {
-                let currentCode = result.codeResult.code;
-                
-                if (currentCode !== lastScannedCode) {
-                    lastScannedCode = currentCode;
-                    console.log("Barcode detected: ", currentCode);
-                    document.getElementById("barcode-result").innerText = currentCode;
-                    Quagga.stop();
-                    
-                    // Restart scanning quickly for fast recognition
-                    // setTimeout(() => { lastScannedCode = ""; }, scanCooldown);
+                if (!/^\d{6,8}$|^\d{12}$|^\d{13}$/.test(code)) {
+                    resultDiv.textContent = 'Invalid barcode format detected';
+                    resultDiv.className = 'error';
+                    return;
                 }
-            });
 
-            // Improve detection in low light
-            Quagga.onProcessed(function(result) {
-                let drawingCtx = Quagga.canvas.ctx.overlay,
-                    drawingCanvas = Quagga.canvas.dom.overlay;
-                
-                if (result) {
-                    if (result.boxes) {
-                        drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-                        result.boxes.forEach(box => {
-                            Quagga.ImageDebug.drawPath(box, {x: 0, y: 1}, drawingCtx, {color: "blue", lineWidth: 2});
-                        });
-                    }
+                if (currentTime - lastDetectionTime < DEBOUNCE_TIME) {
+                    return;
                 }
-            });
+
+                if (lastDetectedCode === code) {
+                    detectionCount++;
+                } else {
+                    lastDetectedCode = code;
+                    detectionCount = 1;
+                }
+
+                lastDetectionTime = currentTime;
+
+                if (detectionCount >= DETECTION_THRESHOLD) {
+                    resultDiv.textContent = `UPC Code: ${code}`;
+                    resultDiv.className = 'success';
+                    stopScanner();
+                } else {
+                    resultDiv.textContent = `Detecting (${detectionCount}/${DETECTION_THRESHOLD}): ${code}`;
+                    resultDiv.className = 'scanning';
+                }
+
+            } catch (detectErr) {
+                handleError('Detection error: ' + detectErr.message);
+            }
         }
 
-        document.addEventListener("DOMContentLoaded", startScanner);
+        function handleError(message) {
+            resultDiv.textContent = `Error: ${message}`;
+            resultDiv.className = 'error';
+            if (isScanning) {
+                Quagga.stop();
+                isScanning = false;
+                stopButton.classList.remove('visible');
+            }
+        }
+
+        function getErrorMessage(err) {
+            switch (err.name) {
+                case 'NotAllowedError': return 'Camera permission denied';
+                case 'NotFoundError': return 'No camera found';
+                case 'NotReadableError': return 'Camera already in use';
+                case 'OverconstrainedError': return 'Camera constraints not supported';
+                case 'StreamApiNotSupportedError': return 'Stream API not supported';
+                default: return err.message || 'Unknown error';
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (isScanning) {
+                Quagga.stop();
+            }
+        });
     </script>
 </body>
 </html>
